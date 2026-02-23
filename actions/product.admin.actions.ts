@@ -50,7 +50,7 @@ export async function createProduct(data: {
         storeId: store.id,
         sku: `SKU-${Date.now()}`,
         images: {
-          create: [{ url: data.imageUrl, isPrimary: true, sortOrder: 0 }],
+          create: [{ url: data.imageUrl, isPrimary: true, order: 0 }],
         },
       },
     });
@@ -90,5 +90,103 @@ export async function toggleProductStatus(
     return { success: true };
   } catch (err: any) {
     return { error: err.message };
+  }
+}
+
+type UpdateProductPayload = {
+  name: string;
+  description: string;
+  price: number;
+  comparePrice?: number;
+  stock: number;
+  categorySlug: string;
+  imageUrl: string;
+  isFeatured: boolean;
+};
+
+function normalizeImageUrl(u: string) {
+  const url = (u ?? "").trim();
+  if (!url) return "";
+
+  const m = url.match(/^https?:\/\/unsplash\.com\/photos\/([a-zA-Z0-9_-]+)/);
+  if (m?.[1]) return `https://source.unsplash.com/${m[1]}/1080x1080`;
+
+  return url;
+}
+
+export async function updateProduct(
+  productId: string,
+  data: UpdateProductPayload,
+) {
+  try {
+    if (!productId) return { error: "Missing productId" };
+
+    const name = (data.name ?? "").trim();
+    const description = (data.description ?? "").trim();
+    const categorySlug = (data.categorySlug ?? "").trim();
+    const imageUrl = normalizeImageUrl(data.imageUrl);
+
+    if (!name) return { error: "Name is required" };
+    if (!description) return { error: "Description is required" };
+    if (!categorySlug) return { error: "Category is required" };
+    if (!imageUrl) return { error: "Image URL is required" };
+    if (!Number.isFinite(data.price) || data.price < 0)
+      return { error: "Invalid price" };
+    if (!Number.isFinite(data.stock) || data.stock < 0)
+      return { error: "Invalid stock" };
+
+    // Find category by slug
+    const category = await prisma.category.findUnique({
+      where: { slug: categorySlug },
+      select: { id: true },
+    });
+    if (!category) return { error: "Category not found" };
+
+    // Ensure product exists
+    const existing = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+    if (!existing) return { error: "Product not found" };
+
+    // Update product + replace primary image (simple and reliable)
+    await prisma.product.update({
+      where: { id: productId },
+      data: {
+        name,
+        description,
+        price: Math.round(Number(data.price)),
+        comparePrice:
+          typeof data.comparePrice === "number" &&
+          Number.isFinite(data.comparePrice)
+            ? Math.round(Number(data.comparePrice))
+            : null,
+        stock: Math.floor(Number(data.stock)),
+        isInStock: Number(data.stock) > 0,
+        isFeatured: Boolean(data.isFeatured),
+        categoryId: category.id,
+
+        images: {
+          // Replace all images with one primary image (easy)
+          deleteMany: {},
+          create: [
+            {
+              url: imageUrl,
+              altText: name,
+              isPrimary: true,
+              order: 0,
+            },
+          ],
+        },
+      },
+    });
+
+    // Refresh admin list + edit page
+    revalidatePath("/admin/products");
+    revalidatePath(`/admin/products/${productId}/edit`);
+
+    return { success: true };
+  } catch (e: any) {
+    return { error: e?.message ?? "Failed to update product" };
   }
 }
