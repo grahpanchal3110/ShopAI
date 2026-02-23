@@ -1,0 +1,16 @@
+// lib/payments/stripe.ts
+import Stripe from "stripe";
+
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: "2024-12-18.acacia",
+  typescript: true,
+});
+
+export function formatAmountForStripe(amount: number, currency = "inr") {
+  // Stripe uses smallest currency unit (paise for INR)
+  return Math.round(amount * 100);
+}
+
+export function formatAmountFromStripe(amount: number) {
+  return amount / 100;
+}
